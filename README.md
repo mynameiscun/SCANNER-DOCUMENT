@@ -12,4 +12,4 @@ Project sử dụng các thư viện chính sau:
 Mở Terminal tại thư mục project và chạy:
 
 ```bash
-pip install customtkinter opencv-python numpy pillow
+pip install customtkinter opencv-python numpy pillow matplotlib
