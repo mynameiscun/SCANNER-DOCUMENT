@@ -4,7 +4,7 @@ import tkinter as tk
 # from tkinter import filedialog #làm cửa sổ chọn file
 from tkinter import filedialog, Canvas #làm cửa sổ chọn file + canvas overlay
 from PIL import Image, ImageTk#Canvas
-from module_perspective import(order_points, transform_perspective)
+from module_perspective import(process_scanned_image, smart_sort_points)
 import numpy as np
 from module_rotate_resize import(
     rotation_pic
@@ -89,6 +89,9 @@ result_last_y = 0
 input_img = None # tránh dữ liệu bị cộng dồn khi thay đổi liên tục
 rotate_angle = 0
 resize_scale = 1.0
+resize_method_var = tk.StringVar(
+    value = "AUTO"
+)
 #----SLIDE BAR----
 #tạo phần slidebar (bên trái)
 sidebar = ctk.CTkFrame( app ,#slide bar là con của app
@@ -167,7 +170,7 @@ def display_source_image():
         , image = canvas_photo
     )
     if len(current_corners) > 0:
-        draw_corner_overlay()
+        draw_scan_overlay()
 #-------------------------------------------
 #----HÀM LẤY NGUỒN ẢNH----
 #-------------------------------------------
@@ -669,7 +672,7 @@ reset_view_button.pack(
 corner_button = ctk.CTkButton(
     sidebar,
 
-    text="Chọn 4 góc",
+    text="Chọn các góc",
 
     height=38,
 
@@ -794,9 +797,109 @@ resize_slider.pack(
     padx=20,
     pady=8
 )
+method_title = ctk.CTkLabel(
+    sidebar,
+    text="Interpolation",
+    font =("Segoe UI", 10, "bold"),
+    text_color=COLOR_TEXT_MUTED
+)
+
+method_title.pack(
+    anchor="w",
+    padx=20,
+    pady=(5, 2)
+)
+method_frame = ctk.CTkFrame(
+    sidebar,
+    fg_color="transparent"
+)
+
+method_frame.pack(
+    fill="x",
+    padx=20,
+    pady=(0, 5)
+)
+radio_auto = ctk.CTkRadioButton(
+    method_frame,
+    text="Auto",
+    variable=resize_method_var,
+    value="AUTO",
+    command=lambda: on_method_change()
+)
+
+radio_auto.grid(
+    row=0,
+    column=0,
+    sticky="w",
+    pady=3
+)
+
+
+radio_nearest = ctk.CTkRadioButton(
+    method_frame,
+    text="Nearest",
+    variable=resize_method_var,
+    value="NEAREST",
+    command=lambda: on_method_change()
+)
+
+radio_nearest.grid(
+    row=1,
+    column=0,
+    sticky="w",
+    pady=3
+)
+
+
+radio_linear = ctk.CTkRadioButton(
+    method_frame,
+    text="Linear",
+    variable=resize_method_var,
+    value="LINEAR",
+    command=lambda: on_method_change()
+)
+
+radio_linear.grid(
+    row=2,
+    column=0,
+    sticky="w",
+    pady=3
+)
+
+
+radio_cubic = ctk.CTkRadioButton(
+    method_frame,
+    text="Cubic",
+    variable=resize_method_var,
+    value="CUBIC",
+    command=lambda: on_method_change()
+)
+
+radio_cubic.grid(
+    row=3,
+    column=0,
+    sticky="w",
+    pady=3
+)
+
+
+radio_area = ctk.CTkRadioButton(
+    method_frame,
+    text="Area",
+    variable=resize_method_var,
+    value="AREA",
+    command=lambda: on_method_change()
+)
+
+radio_area.grid(
+    row=4,
+    column=0,
+    sticky="w",
+    pady=3
+)
 method_label = ctk.CTkLabel(
     sidebar,
-    text="Method: Original",
+    text="Using: Original",
     font=("Consolas", 10),
     text_color=COLOR_TEXT_MUTED
 )
@@ -1072,10 +1175,36 @@ def start_corner_selection():
 def add_corner(event):
     global current_corners
     global corner_select_mode
+    
     if not corner_select_mode:
         return
-    if len(current_corners) >= 4:
+    #click vô point cũ thì xóa
+    point_index = find_corner_at(
+        event.x,
+        event.y
+    )
+    if point_index is not None:
+        current_corners.pop(
+            point_index
+        )
+        if len(current_corners) < 4:
+            #dùng mảnh 2 sắp xếp
+            scan_button.configure(
+                state = "disabled"
+            )
+        else:
+            scan_button.configure(
+                        state = "normal"
+                    )
+            status_label.configure(
+                text=(
+                    f"● Đã chọn"
+                    f"{len(current_corners)} điểm"
+                )
+            )
+        display_source_image()
         return
+
     point = canvas_to_image(
         event.x,
         event.y
@@ -1083,101 +1212,250 @@ def add_corner(event):
     if point is None:
         return
     image_x, image_y = point
-    #lưu tọa độ ảnh thật
-    current_corners.append(
-        [image_x, image_y]
-    )
-    display_source_image()
-    #đủ 4 góc
-    if len(current_corners) == 4:
-        #dùng mảnh 2 sắp xếp
-        ordered = order_points(
-            np.array(
-                current_corners,
-                dtype="float32"
-            )
-        )
-        current_corners = (ordered.tolist())
-        corner_select_mode = False
-        #bật nút quét thử
+    current_corners.append([
+        image_x,
+        image_y
+    ])
+    if len(current_corners) >= 4:
         scan_button.configure(
-            state = "normal"
-        )
-        status_label.configure(
-            text="● Đã chọn đủ 4 góc"
+            state="normal"
         )
     else:
-        status_label.configure(
-            text=(
-                f"● Chọn góc "
-                f"{len(current_corners) + 1}/4"
-            )
+        scan_button.configure(
+            state="disabled"
         )
-
+    status_label.configure(
+        text=(
+            f"● Đã chọn "
+            f"{len(current_corners)} điểm"
+        )
+    )
     display_source_image()
+    
 #TẤM CANVAS ĐỂ NGƯỜI DÙNG BIẾT TRƯỚC ĐANG CHỌN NTN
-def draw_corner_overlay():
+#def draw_scan_overlay():
+#    if len(current_corners) == 0:
+#        return
+#    points_canvas = []
+#    for image_x, image_y in current_corners:
+#        canvas_x, canvas_y = image_to_canvas(
+#            image_x,
+#            image_y
+#        )
+#        points_canvas.append(
+#            (canvas_x, canvas_y)
+#        )
+#    if 2 <= len(points_canvas) < 4:
+#
+#        coords = []
+#
+#        for x, y in points_canvas:
+#
+#            coords.extend(
+#                [x, y]
+#            )
+#        image_canvas.create_line(
+#            *coords,
+#            fill="#22C55E",
+#            width=3,
+#            tags="corner_overlay"
+#        )
+#    if len(points_canvas) == 4:
+#        coords = []
+#        for x, y in points_canvas:
+#            coords.extend(
+#                [x, y]
+#            )
+#        image_canvas.create_polygon(
+#            *coords,
+#            fill="",
+#            outline="#22C55E",
+#            width=3,
+#            tags="corner_overlay"
+#        )
+#    radius = 7
+#    for index, (x, y) in enumerate(
+#        points_canvas
+#    ):
+#        image_canvas.create_oval(
+#            x - radius,
+#            y - radius,
+#            x + radius,
+#            y + radius,
+#            fill="#22C55E",
+#            outline="white",
+#            width=2,
+#            tags="corner_overlay"
+#        )
+#        image_canvas.create_text(
+#            x,
+#            y - 18,
+#            text=f"P{index + 1}",
+#            fill="white",
+#            tags="corner_overlay"
+#        )     
+def draw_scan_overlay():
     if len(current_corners) == 0:
         return
-    points_canvas = []
-    for image_x, image_y in current_corners:
+    # =========================================
+    # TRƯỜNG HỢP CHƯA ĐỦ 4 ĐIỂM
+    # Chỉ hiện các điểm người dùng vừa chọn
+    # =========================================
+
+    if len(current_corners) < 4:
+
+        for index, (image_x, image_y) in enumerate(
+            current_corners
+        ):
+
+            canvas_x, canvas_y = image_to_canvas(
+                image_x,
+                image_y
+            )
+
+            draw_scan_point(
+                canvas_x,
+                canvas_y,
+                index + 1,
+                "#22C55E"
+            )
+
+        return
+
+
+    # =========================================
+    # TỪ 4 ĐIỂM TRỞ LÊN
+    # Nhờ Mảnh 2 xác định 4 góc ngoài
+    # =========================================
+
+    outer_rect, pt_ML, pt_MR = smart_sort_points(
+        current_corners
+    )
+
+
+    # =========================================
+    # VẼ KHUNG 4 GÓC NGOÀI
+    # =========================================
+
+    outer_canvas = []
+
+    for image_x, image_y in outer_rect:
 
         canvas_x, canvas_y = image_to_canvas(
             image_x,
             image_y
         )
-        points_canvas.append(
-            (canvas_x, canvas_y)
-        )
-    if 2 <= len(points_canvas) < 4:
 
-        coords = []
-
-        for x, y in points_canvas:
-
-            coords.extend(
-                [x, y]
-            )
-        image_canvas.create_line(
-            *coords,
-            fill="#22C55E",
-            width=3,
-            tags="corner_overlay"
+        outer_canvas.extend(
+            [canvas_x, canvas_y]
         )
-    if len(points_canvas) == 4:
-        coords = []
-        for x, y in points_canvas:
-            coords.extend(
-                [x, y]
-            )
-        image_canvas.create_polygon(
-            *coords,
-            fill="",
-            outline="#22C55E",
-            width=3,
-            tags="corner_overlay"
-        )
-    radius = 7
-    for index, (x, y) in enumerate(
-        points_canvas
+
+
+    image_canvas.create_polygon(
+        *outer_canvas,
+
+        fill="",
+        outline="#22C55E",
+        width=3,
+
+        tags="scan_overlay"
+    )
+
+
+    # =========================================
+    # VẼ TẤT CẢ ĐIỂM
+    # =========================================
+
+    for index, (image_x, image_y) in enumerate(
+        current_corners
     ):
-        image_canvas.create_oval(
-            x - radius,
-            y - radius,
-            x + radius,
-            y + radius,
-            fill="#22C55E",
-            outline="white",
-            width=2,
-            tags="corner_overlay"
+
+        canvas_x, canvas_y = image_to_canvas(
+            image_x,
+            image_y
         )
-        image_canvas.create_text(
-            x,
-            y - 18,
-            text=f"P{index + 1}",
-            fill="white",
-            tags="corner_overlay"
-        )       
+
+
+        # kiểm tra điểm này có phải
+        # một trong 4 góc ngoài không
+        is_outer = False
+
+        for corner in outer_rect:
+
+            distance = np.linalg.norm(
+                np.array(
+                    [image_x, image_y]
+                )
+                -
+                corner
+            )
+
+            if distance < 1:
+                is_outer = True
+                break
+
+
+        # =============================
+        # GÓC NGOÀI
+        # =============================
+
+        if is_outer:
+
+            color = "#22C55E"
+
+
+        # =============================
+        # ĐIỂM NẾP GẤP
+        # =============================
+
+        else:
+
+            color = "#FACC15"
+
+
+        draw_scan_point(
+            canvas_x,
+            canvas_y,
+            index + 1,
+            color
+        )
+def draw_scan_point(
+    x,
+    y,
+    number,
+    color
+):
+
+    radius = 7
+
+
+    image_canvas.create_oval(
+
+        x - radius,
+        y - radius,
+
+        x + radius,
+        y + radius,
+
+        fill=color,
+        outline="white",
+        width=2,
+
+        tags="scan_overlay"
+    )
+
+
+    image_canvas.create_text(
+
+        x,
+        y - 18,
+
+        text=f"P{number}",
+
+        fill="white",
+
+        tags="scan_overlay"
+    )
 def find_corner_at(canvas_x, canvas_y):
     # bán kính bắt chuột lớn hơn bán kính dot
     hit_radius = 18
@@ -1224,35 +1502,63 @@ def drag_corner(event):
     # vẽ lại ảnh + polygon
     display_source_image()
 #GỬI 4 GÓC SANG MẢNH 2 để lấy về ảnh preview
+#tính toán lại vị trí 4 góc để hiển thị đẹp nhất
+#def calculate_output_size(corners):
+#    # Sắp xếp 4 điểm theo:
+#    # TL, TR, BR, BL
+#    rect = order_points(
+#        np.array(
+#            corners,
+#            dtype="float32"
+#        )
+#    )
+#    tl, tr, br, bl = rect
+#    # TÍNH CHIỀU RỘNG
+#    width_top = np.linalg.norm( tr - tl )
+#    width_bottom = np.linalg.norm( br - bl )
+#    output_width = int(
+#        max( width_top, width_bottom)
+#    )
+#    # TÍNH CHIỀU CAO
+#    height_left = np.linalg.norm( bl - tl )
+#    height_right = np.linalg.norm( br - tr )
+#    output_height = int(
+#        max( height_left, height_right)
+#    )
+#    # tránh trường hợp bằng 0
+#    output_width = max( 1, output_width)
+#    output_height = max( 1, output_height
+#    )
+#    return (
+#        output_width,
+#        output_height
+#    )
+#
 def preview_scan():
-    global scan_img, result_img
-
+    global scan_img
+    global result_img
     if original_img is None:
         print("Chưa có ảnh")
         return
-
-    if len(current_corners) != 4:
-        print("Chưa đủ 4 góc")
+    if len(current_corners) < 4:
+        print("Chọn ít nhất 4 điểm")
         return
-    #mảnh 2 
-    scan_img = transform_perspective(
-        original_img,       
-        current_corners,
-        output_size=(600, 800)
+    # MẢNH 2
+    scan_img = process_scanned_image(
+        original_img,
+        current_corners
     )
     if scan_img is None:
-        print("Không tạo được ảnh Preview")
+        print(
+            "Không thể tạo ảnh Preview!"
+        )
         return
-    # result ban đầu giống ảnh scan
+    # Result ban đầu = Scan
     result_img = scan_img.copy()
-    save_button.configure(
-        state = "normal"
-    )
-    print(
-        "Preview:",
-        result_img.shape
-    )
     reset_result_view()
+    save_button.configure(
+        state="normal"
+    )
     status_label.configure(
         text="● Đã tạo Preview",
         text_color="#C4B5FD",
@@ -1755,6 +2061,99 @@ def end_result_pan(event):
         cursor="arrow"
     )    
 #TỰ RESIZE
+def get_resize_model():
+
+    selected_method = resize_method_var.get()
+
+
+    # ==================================
+    # AUTO - GUI TỰ QUYẾT ĐỊNH
+    # ==================================
+
+    if selected_method == "AUTO":
+
+        if resize_scale < 1:
+
+            return cv2.INTER_AREA
+
+        elif resize_scale > 1:
+
+            return cv2.INTER_CUBIC
+
+        else:
+
+            return cv2.INTER_LINEAR
+
+
+    # ==================================
+    # NGƯỜI DÙNG TỰ CHỌN
+    # ==================================
+
+    if selected_method == "NEAREST":
+
+        return cv2.INTER_NEAREST
+
+
+    elif selected_method == "LINEAR":
+
+        return cv2.INTER_LINEAR
+
+
+    elif selected_method == "CUBIC":
+
+        return cv2.INTER_CUBIC
+
+
+    elif selected_method == "AREA":
+
+        return cv2.INTER_AREA
+
+
+    # dự phòng
+    return cv2.INTER_LINEAR
+def update_method_label():
+
+    selected_method = resize_method_var.get()
+
+
+    # Không resize
+    if resize_scale == 1.0:
+
+        method_label.configure(
+            text="Using: Original"
+        )
+
+        return
+
+
+    # ==========================
+    # AUTO
+    # ==========================
+
+    if selected_method == "AUTO":
+
+        if resize_scale < 1:
+
+            method_label.configure(
+                text="Auto → INTER_AREA"
+            )
+
+        else:
+
+            method_label.configure(
+                text="Auto → INTER_CUBIC"
+            )
+
+        return
+
+
+    # ==========================
+    # MANUAL
+    # ==========================
+
+    method_label.configure(
+        text=f"Manual → INTER_{selected_method}"
+    )
 def on_result_resize(event):
 
     if result_img is not None:
@@ -1779,25 +2178,32 @@ def on_rotate_change(value):
 def on_resize_change(value):
 
     global resize_scale
-    percent = int(value)
-    resize_scale = percent / 100
+
+
+    percent = int(
+        float(value)
+    )
+
+    resize_scale = (
+        percent / 100
+    )
+
+
     resize_value_label.configure(
         text=f"{percent}%"
     )
-    if resize_scale < 1:
-        method_label.configure(
-            text="Method: INTER_AREA"
-        )
-    elif resize_scale > 1:
 
-        method_label.configure(
-            text="Method: INTER_CUBIC"
-        )
-    else:
-        method_label.configure(
-            text="Method: Original"
-        )
-    #update ngay
+
+    # cập nhật method đang dùng
+    update_method_label()
+
+
+    # preview realtime
+    update_output_preview()
+def on_method_change():
+
+    update_method_label()
+
     update_output_preview()
 def apply_preprocessing():
     global result_img
@@ -1817,15 +2223,15 @@ def apply_preprocessing():
     # GUI CHỌN INTERPOLATION
     if resize_scale < 1:
 
-        model = cv2.INTER_AREA
+        model = get_resize_model()
 
     elif resize_scale > 1:
 
-        model = cv2.INTER_CUBIC
+        model = get_resize_model()
 
     else:
 
-        model = cv2.INTER_LINEAR
+        model = get_resize_model()
     # MẢNH 1 - RESIZE ẢNH THẬT
     if resize_scale != 1.0:
         processed_img = zoom_pic(
@@ -1848,13 +2254,22 @@ def apply_preprocessing():
     )
 #MẢNH 1 HÀM PREVIEW CHUNG CHO 2 THUỘC TÍNH
 def update_output_preview():
+
     global result_img
+
 
     if scan_img is None:
         return
 
-    # luôn bắt đầu từ ảnh Scan ban đầu
+
+    # luôn xử lý từ ảnh Scan ban đầu
     processed_img = scan_img.copy()
+
+
+    # =============================
+    # ROTATE - MẢNH 1
+    # =============================
+
     if rotate_angle != 0:
 
         processed_img = rotation_pic(
@@ -1862,24 +2277,26 @@ def update_output_preview():
             rotate_angle
         )
 
-    if resize_scale < 1:
 
-        model = cv2.INTER_AREA
+    # =============================
+    # MODEL RESIZE
+    # =============================
 
-    elif resize_scale > 1:
+    model = get_resize_model()
 
-        model = cv2.INTER_CUBIC
 
-    else:
-
-        model = cv2.INTER_LINEAR
+    # =============================
+    # RESIZE - MẢNH 1
+    # =============================
 
     if resize_scale != 1.0:
+
         processed_img = zoom_pic(
             processed_img,
             scale=resize_scale,
             model=model
         )
+
 
     result_img = processed_img
 
@@ -2073,7 +2490,6 @@ def on_left_press(event):
             cursor="hand2"
         )
         return
-    start_pan(event)
 #Chặn pan khi đang chọn góc
 def on_left_drag(event):
     if corner_select_mode:
@@ -2081,7 +2497,6 @@ def on_left_drag(event):
     if dragging_corner is not None:
         drag_corner(event)
         return
-    drag_pan(event)
 #Mouse release
 def on_left_release(event):
     global dragging_corner
@@ -2094,8 +2509,13 @@ def on_left_release(event):
         )
 
         return
-    if corner_select_mode:
-        return
+    
+#HÀM LÀM VIỆC VỚI CHUỘT TRÁI
+def on_right_press(event):
+    start_pan(event)
+def on_right_drag(event):
+    drag_pan(event)
+def on_right_release(event):
     end_pan(event)
 #BIND
 image_canvas.bind(
@@ -2107,30 +2527,49 @@ image_canvas.bind(
     "<Configure>"#sự kiên xảy ra khi thay đổi kích thước vị trí (phóng to thu nhỏ cửa sổ)
     , on_canvas_resize# thì gọi hàm này
 )     
- 
-#PAN
+
 # NHẤN CHUỘT TRÁI
 image_canvas.bind(
     "<ButtonPress-1>",
     on_left_press
+)
+#Chuyển động
+image_canvas.bind(
+    "<B1-Motion>",
+    on_left_drag
 )
 # THẢ CHUỘT
 image_canvas.bind(
     "<ButtonRelease-1>",
     on_left_release
 )
-#LĂN CHUỘT
+#CHUỘT PHẢI CHO HÀM PAN
 image_canvas.bind(
-    "<MouseWheel>",
-    mouse_wheel_zoom
+    "<ButtonPress-3>",
+    on_right_press
+)
+
+#Chuyển động
+image_canvas.bind(
+    "<B3-Motion>",
+    on_right_drag
+)
+# THẢ CHUỘT
+image_canvas.bind(
+    "<ButtonRelease-3>",
+    on_right_release
 )
 #-----ẢNH KẾT QUẢ----
 result_canvas.bind(
     "<MouseWheel>",
     result_mouse_wheel_zoom
 )
-
-
+#CON LĂN CHO HÀM ZOOM (viewzoom)
+#LĂN CHUỘT
+image_canvas.bind(
+    "<MouseWheel>",
+    mouse_wheel_zoom
+)
 result_canvas.bind(
     "<ButtonPress-1>",
     start_result_pan
@@ -2287,7 +2726,9 @@ def reset_all():
     rotate_angle = 0
 
     resize_scale = 1.0
-
+    resize_method_var.set(
+        "AUTO"
+    )
 
     rotate_slider.set(0)
 
@@ -2299,7 +2740,7 @@ def reset_all():
         text="100%"
     )
     method_label.configure(
-        text="Method: Original"
+        text="Using: Original"
     )
     # ==============================
     # XÓA SOURCE CANVAS
